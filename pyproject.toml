@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vaezip"
+version = "0.1.0"
+description = "VaeZip: PyTorch and safetensors based package"
+readme = "README.md"
+license = "Unlicense"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+keywords = ["vae", "compression", "pytorch", "safetensors"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Typing :: Typed",
+]
+dependencies = [
+    "torch>=2.2",
+    "safetensors>=0.4.3",
+]
+
+[dependency-groups]
+dev = [
+    "build>=1.2",
+    "mypy>=1.10",
+    "pre-commit>=3.7",
+    "pytest>=8.0",
+    "ruff>=0.5",
+    "twine>=5.1",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+vaezip = ["py.typed"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+
+[tool.mypy]
+strict = true
+mypy_path = "src"
+explicit_package_bases = true
+files = ["src/vaezip"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = ["-ra", "--strict-markers", "--strict-config"]
