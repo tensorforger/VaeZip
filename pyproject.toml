@@ -5,12 +5,19 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "vaezip"
 version = "0.1.0"
-description = "VaeZip: PyTorch and safetensors based package"
+description = "Compression of VAE latents: low-bit quantization codecs on PyTorch and safetensors"
 readme = "README.md"
 license = "Unlicense"
 license-files = ["LICENSE"]
 requires-python = ">=3.10"
-keywords = ["vae", "compression", "pytorch", "safetensors"]
+keywords = [
+    "vae",
+    "latents",
+    "compression",
+    "quantization",
+    "pytorch",
+    "safetensors",
+]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -27,7 +34,14 @@ classifiers = [
 dependencies = [
     "torch>=2.2",
     "safetensors>=0.4.3",
+    "numpy>=1.24",
 ]
+
+[project.urls]
+Homepage = "https://github.com/tensorforger/VaeZip"
+Issues = "https://github.com/tensorforger/VaeZip/issues"
+Changelog = "https://github.com/tensorforger/VaeZip/blob/main/CHANGELOG.md"
+Benchmark = "https://github.com/tensorforger/LatentStorageBenchmark"
 
 [dependency-groups]
 dev = [

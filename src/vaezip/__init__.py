@@ -1,10 +1,16 @@
-"""VaeZip package."""
+"""VaeZip: compression of VAE latents."""
 
-from importlib.metadata import PackageNotFoundError, version
+from vaezip import codecs
+from vaezip._version import __version__
+from vaezip.api import load, save
+from vaezip.encoded_tensor import EncodedTensor, deserialize, serialize
 
-try:
-    __version__ = version("vaezip")
-except PackageNotFoundError:  # Source checkout that is not installed.
-    __version__ = "0.0.0+unknown"
-
-__all__ = ["__version__"]
+__all__ = [
+    "EncodedTensor",
+    "__version__",
+    "codecs",
+    "deserialize",
+    "load",
+    "save",
+    "serialize",
+]
