@@ -1,10 +1,16 @@
-# VaeZip
+![main_logo](https://raw.githubusercontent.com/tensorforger/tensorforger/main/assets/VaeZip_main_logo.png)
 
-Compression of VAE latents with low-bit quantization codecs, built on PyTorch and safetensors.
+
+**VaeZip** is the simple and efficient way to store latent tensors. It brings in low-bit quantization codecs, built around **PyTorch** and **safetensors** and exploits how [VAEs store there latents](https://github.com/tensorforger/LatentStorageBenchmark).
+
 
 The codecs were selected from the results of the
 [LatentStorageBenchmark](https://github.com/tensorforger/LatentStorageBenchmark),
 which compares many latent storage schemes by reconstruction quality, size and I/O time.
+
+![demo](https://raw.githubusercontent.com/tensorforger/tensorforger/main/assets/VaeZip_demo.png)
+
+*10x file size reduction with almost no quality loss. ![reproduce these results]()*
 
 ## Installation
 
@@ -24,9 +30,6 @@ latents = torch.randn([4, 32, 128, 128], device="cuda")
 
 vaezip.save(latents, "latents.vz.safetensors", codec="lbrq_4bit")
 restored = vaezip.load("latents.vz.safetensors", device="cuda")
-
-data = vaezip.save(latents, codec="cast_fp16")  # bytes
-restored = vaezip.load(data, dtype=torch.bfloat16)
 ```
 
 The codec config is stored in the file metadata, so `load()` needs no codec.
