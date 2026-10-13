@@ -10,7 +10,12 @@ which compares many latent storage schemes by reconstruction quality, size and I
 
 ![demo](https://raw.githubusercontent.com/tensorforger/tensorforger/main/assets/VaeZip_demo.png)
 
-*10x file size reduction with almost no quality loss. ![reproduce these results]()*
+*10x file size reduction with almost no quality loss. [reproduce these results](https://github.com/tensorforger/VaeZip/blob/main/examples/demo_reproduction.ipynb)*.
+
+**Use cases**:
+* Storage of large-scale encoded datasets for pretraining.
+* Network transfer of latents in efficient inference pipelines, where VAE and generative transformer/VLM are on different nodes.
+* Pipeline parallelism: Transfer activations/latents between pipeline stages over slow interconnects (PCIe, Ethernet, cross-datacenter).
 
 ## Installation
 

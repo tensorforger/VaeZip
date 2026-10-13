@@ -1,6 +1,6 @@
 import torch
-from torch import nn
 from diffusers.models import AutoencoderKLFlux2
+from torch import nn
 
 
 class Flux2VAE(nn.Module):
