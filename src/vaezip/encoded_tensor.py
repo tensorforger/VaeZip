@@ -1,33 +1,18 @@
-"""Container for compressed latents and its (de)serialization."""
+"""Container for compressed latents."""
 
 from __future__ import annotations
 
-import io
 import json
-import struct
+import os
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
-from safetensors.torch import load as load_safetensors
-from safetensors.torch import save as save_safetensors
+
+if TYPE_CHECKING:
+    from vaezip.codecs.base import Codec
 
 CODEC_CONFIG_KEY = "codec_config"
-SAFETENSORS_FORMAT = "safetensors"
-PTH_FORMAT = "pth"
-SUPPORTED_FORMATS = (SAFETENSORS_FORMAT, PTH_FORMAT)
-
-_PTH_TENSORS_KEY = "tensors"
-_PTH_METADATA_KEY = "metadata"
-_SAFETENSORS_HEADER_SIZE_BYTES = 8
-_SAFETENSORS_METADATA_KEY = "__metadata__"
-
-
-def check_format(format: str) -> None:
-    if format not in SUPPORTED_FORMATS:
-        raise ValueError(
-            f"Unsupported format {format!r}, expected one of {SUPPORTED_FORMATS}"
-        )
 
 
 @dataclass
@@ -66,67 +51,43 @@ class EncodedTensor:
             metadata=dict(self.metadata),
         )
 
-    def serialize(
-        self, save_metadata: bool = True, format: str = SAFETENSORS_FORMAT
-    ) -> bytes:
+    def decode(
+        self,
+        codec: Codec | str | os.PathLike[str] | None = None,
+        dtype: torch.dtype = torch.float32,
+        device: torch.device | str | None = None,
+    ) -> torch.Tensor:
         """
         args:
-            save_metadata: store the metadata (including the codec config)
-            format: "safetensors" or "pth"
+            codec: codec object, shortcut name or config path, by default the codec
+            from the metadata. If both are available they must have the same config.
+            dtype: floating point dtype of the result
+            device: device to decode on, by default the device of the stored tensors
         returns:
-            serialized bytes
+            tensor: [B, ...], original shape, dtype: dtype
         """
-        check_format(format)
-        metadata = dict(self.metadata) if save_metadata else {}
-        cpu_tensors = {
-            name: tensor.detach().to("cpu", copy=True).contiguous()
-            for name, tensor in self.tensors.items()
-        }
-        if format == SAFETENSORS_FORMAT:
-            return save_safetensors(cpu_tensors, metadata=metadata or None)
-        buffer = io.BytesIO()
-        torch.save({_PTH_TENSORS_KEY: cpu_tensors, _PTH_METADATA_KEY: metadata}, buffer)
-        return buffer.getvalue()
+        from vaezip.codecs.auto import AutoCodec
+        from vaezip.codecs.base import Codec
+        from vaezip.codecs.config import without_version
 
-    @classmethod
-    def deserialize(
-        cls, data: bytes, format: str = SAFETENSORS_FORMAT
-    ) -> EncodedTensor:
-        """
-        args:
-            data: bytes produced by `serialize()`
-            format: "safetensors" or "pth"
-        returns:
-            encoded tensor with tensors on CPU
-        """
-        check_format(format)
-        if format == SAFETENSORS_FORMAT:
-            return cls(
-                tensors=load_safetensors(data),
-                metadata=_read_safetensors_metadata(data),
+        stored_config = self.codec_config
+        if codec is None:
+            if stored_config is None:
+                raise ValueError(
+                    "The encoded tensor has no codec config in its metadata, "
+                    "pass the codec explicitly"
+                )
+            resolved_codec = AutoCodec.from_config(stored_config)
+        else:
+            resolved_codec = (
+                codec if isinstance(codec, Codec) else AutoCodec.from_config(codec)
             )
-        content = torch.load(io.BytesIO(data), map_location="cpu", weights_only=True)
-        return cls(
-            tensors=dict(content[_PTH_TENSORS_KEY]),
-            metadata=dict(content[_PTH_METADATA_KEY]),
-        )
-
-
-def serialize(
-    encoded: EncodedTensor,
-    save_metadata: bool = True,
-    format: str = SAFETENSORS_FORMAT,
-) -> bytes:
-    return encoded.serialize(save_metadata=save_metadata, format=format)
-
-
-def deserialize(data: bytes, format: str = SAFETENSORS_FORMAT) -> EncodedTensor:
-    return EncodedTensor.deserialize(data, format=format)
-
-
-def _read_safetensors_metadata(data: bytes) -> dict[str, str]:
-    (header_size,) = struct.unpack_from("<Q", data, 0)
-    header_end = _SAFETENSORS_HEADER_SIZE_BYTES + header_size
-    header = json.loads(bytes(data[_SAFETENSORS_HEADER_SIZE_BYTES:header_end]))
-    metadata: dict[str, str] = header.get(_SAFETENSORS_METADATA_KEY, {})
-    return metadata
+            if stored_config is not None and without_version(
+                stored_config
+            ) != without_version(resolved_codec.get_config()):
+                raise ValueError(
+                    f"The codec {resolved_codec!r} does not match the config stored "
+                    f"in the encoded tensor: {stored_config}"
+                )
+        encoded = self if device is None else self.to(device)
+        return resolved_codec.decode(encoded, dtype=dtype)

@@ -33,12 +33,30 @@ import vaezip
 
 latents = torch.randn([4, 32, 128, 128], device="cuda")
 
-vaezip.save(latents, "latents.vz.safetensors", codec="lbrq_4bit")
-restored = vaezip.load("latents.vz.safetensors", device="cuda")
+vaezip.save_tensor(latents, "latents.vz.safetensors", codec="lbrq_4bit")
+restored = vaezip.load_tensor("latents.vz.safetensors", device="cuda")
 ```
 
-The codec config is stored in the file metadata, so `load()` needs no codec.
-Pass `save_metadata=False` to drop it, then `load()` requires an explicit `codec=`.
+The codec config is stored in the file, so `load_tensor()` needs no codec.
+
+Several tensors, each with its own codec, go to one file as a dict of `EncodedTensor`:
+
+```python
+from vaezip.codecs import AutoCodec
+
+tensor_a = torch.randn([4, 32, 128, 128])
+tensor_b = torch.randn([4, 64, 256])
+codec_b = AutoCodec.from_config("brq_8bit", block_size=(4,))
+
+batch_dict = {
+    "tensor_a": vaezip.encode(tensor_a, codec="lbrq_3bit"),
+    "tensor_b": vaezip.encode(tensor_b, codec=codec_b),
+}
+vaezip.save(batch_dict, "batch_dict.vz.safetensors")
+
+batch_dict = vaezip.load("batch_dict.vz.safetensors")
+tensor_a = batch_dict["tensor_a"].decode(device="cuda")
+```
 
 ## Key concepts
 
@@ -57,13 +75,12 @@ restored = codec.decode(encoded)
 ```
 
 **EncodedTensor** holds named tensors plus string metadata with the codec config.
-It serializes to `.safetensors` (default) or `.pth`:
+`encoded.decode()` restores the tensor with the codec from the metadata, or with an explicit `codec=`.
+`vaezip.encode()` and `vaezip.decode()` are the same with codec shortcuts and configs.
 
-```python
-data = encoded.serialize()  # or vaezip.serialize(encoded)
-encoded = vaezip.deserialize(data)
-data = encoded.serialize(save_metadata=False, format="pth")
-```
+**Files** hold a dict of `EncodedTensor`, `vaezip.save()` and `vaezip.load()` work with paths or bytes.
+The format is `.safetensors` by default, `.pth` only with `format="pth"`.
+`vaezip.save_tensor()` and `vaezip.load_tensor()` are shortcuts for a file with a single tensor stored as `"tensor"`.
 
 **Configs** are diffusers-style JSON files and can be created from files, shortcut names or dicts.
 Keyword arguments override config values:

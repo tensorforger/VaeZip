@@ -1,63 +1,15 @@
-import struct
-
 import pytest
 import torch
 
 import vaezip
 from vaezip import EncodedTensor
-from vaezip.codecs import BlockRangeQuantCodec, CastCodec, LloydBlockRangeQuantCodec
-
-
-@pytest.mark.parametrize("format", ["safetensors", "pth"])
-def test_serialize_roundtrip(format: str) -> None:
-    encoded = EncodedTensor(
-        tensors={
-            "a": torch.randn(2, 3),
-            "b": torch.randint(0, 255, (4,), dtype=torch.uint8),
-            "c": torch.randn(3).to(torch.float8_e4m3fn),
-            "d": torch.randn(2).to(torch.bfloat16),
-        },
-        metadata={"key": "value"},
-    )
-    restored = vaezip.deserialize(
-        vaezip.serialize(encoded, format=format), format=format
-    )
-    assert restored.metadata == {"key": "value"}
-    assert restored.tensors.keys() == encoded.tensors.keys()
-    for name, tensor in encoded.tensors.items():
-        assert restored.tensors[name].dtype == tensor.dtype
-        assert torch.equal(restored.tensors[name].float(), tensor.float())
-
-
-@pytest.mark.parametrize("format", ["safetensors", "pth"])
-def test_save_metadata_false_drops_metadata(format: str) -> None:
-    encoded = CastCodec().encode(torch.randn(2, 3))
-    assert encoded.codec_config is not None
-    with_metadata = encoded.serialize(format=format)
-    without_metadata = encoded.serialize(save_metadata=False, format=format)
-    assert (
-        EncodedTensor.deserialize(with_metadata, format=format).codec_config is not None
-    )
-    restored = EncodedTensor.deserialize(without_metadata, format=format)
-    assert restored.metadata == {}
-    assert restored.codec_config is None
-    assert len(without_metadata) < len(with_metadata)
-
-
-def test_default_format_is_safetensors() -> None:
-    data = CastCodec().encode(torch.randn(2, 3)).serialize()
-    (header_size,) = struct.unpack_from("<Q", data, 0)
-    assert data[8:9] == b"{"
-    assert header_size < len(data)
-    assert EncodedTensor.deserialize(data).tensors["values"].shape == (2, 3)
-
-
-def test_unsupported_format() -> None:
-    encoded = CastCodec().encode(torch.randn(2, 3))
-    with pytest.raises(ValueError):
-        encoded.serialize(format="npz")
-    with pytest.raises(ValueError):
-        EncodedTensor.deserialize(b"", format="npz")
+from vaezip.codecs import (
+    AutoCodec,
+    BlockRangeQuantCodec,
+    CastCodec,
+    LloydBlockRangeQuantCodec,
+    RangeQuantCodec,
+)
 
 
 def test_encode_attaches_codec_config() -> None:
@@ -66,7 +18,7 @@ def test_encode_attaches_codec_config() -> None:
     assert encoded.codec_config == codec.get_config()
 
 
-def test_encoded_tensor_helpers(device: torch.device) -> None:
+def test_helpers(device: torch.device) -> None:
     encoded = BlockRangeQuantCodec().encode(torch.randn(2, 4, 8, 8, device=device))
     assert encoded.nbytes > 0
     moved = encoded.to("cpu")
@@ -74,19 +26,82 @@ def test_encoded_tensor_helpers(device: torch.device) -> None:
     assert moved.metadata == encoded.metadata
 
 
-def test_serialize_from_device(device: torch.device) -> None:
-    latents = torch.randn(2, 4, 8, 8, device=device)
-    codec = BlockRangeQuantCodec(value_bits=6)
-    restored = EncodedTensor.deserialize(codec.encode(latents).serialize())
-    expected = codec.decode(codec.encode(latents)).cpu()
-    assert torch.allclose(codec.decode(restored), expected, atol=1e-5)
+@pytest.mark.parametrize("name", ["cast_fp16", "rq_4bit", "brq_6bit", "lbrq_4bit"])
+def test_decode_uses_codec_from_metadata(name: str) -> None:
+    latents = torch.randn(2, 8, 24, 24)
+    codec = AutoCodec.from_config(name)
+    encoded = codec.encode(latents)
+    assert torch.equal(encoded.decode(), codec.decode(encoded))
+
+
+def test_decode_with_explicit_codec() -> None:
+    encoded = RangeQuantCodec(bits=8).encode(torch.randn(2, 4, 8, 8))
+    expected = encoded.decode()
+    assert torch.equal(encoded.decode(codec="rq_8bit"), expected)
+    assert torch.equal(encoded.decode(codec=RangeQuantCodec(bits=8)), expected)
+
+
+def test_decode_with_mismatching_codec_raises() -> None:
+    encoded = vaezip.encode(torch.randn(2, 4, 8, 8), codec="rq_8bit")
+    with pytest.raises(ValueError, match="does not match"):
+        encoded.decode(codec="rq_4bit")
+    with pytest.raises(ValueError, match="does not match"):
+        encoded.decode(codec="cast_fp16")
+    with pytest.raises(ValueError, match="does not match"):
+        encoded.decode(codec=RangeQuantCodec(bits=8, channel_dim=2))
+
+
+def test_decode_comparison_ignores_version_but_not_options() -> None:
+    encoded = vaezip.encode(torch.randn(2, 4, 8, 8), codec="lbrq_4bit")
+    assert encoded.codec_config is not None
+    encoded.metadata["codec_config"] = encoded.metadata["codec_config"].replace(
+        encoded.codec_config["_vaezip_version"], "0.0.1"
+    )
+    encoded.decode(codec="lbrq_4bit")
+    with pytest.raises(ValueError, match="does not match"):
+        encoded.decode(codec=AutoCodec.from_config("lbrq_4bit", cache_table=True))
+
+
+def test_decode_without_metadata_requires_codec() -> None:
+    latents = torch.randn(2, 4, 8, 8)
+    encoded = vaezip.encode(latents, codec="rq_8bit")
+    bare = EncodedTensor(tensors=encoded.tensors)
+    with pytest.raises(ValueError, match="metadata"):
+        bare.decode()
+    assert torch.equal(bare.decode(codec="rq_8bit"), encoded.decode())
+
+
+def test_decode_dtype_and_device(device: torch.device) -> None:
+    latents = torch.randn(2, 4, 16, 16)
+    encoded = vaezip.encode(latents, codec="brq_8bit")
+    decoded = encoded.decode(dtype=torch.bfloat16, device=device)
+    assert decoded.dtype == torch.bfloat16
+    assert decoded.device.type == device.type
+    assert decoded.shape == latents.shape
+
+
+def test_decode_device_of_encoded_tensors_is_default(device: torch.device) -> None:
+    encoded = vaezip.encode(torch.randn(2, 4, 8, 8, device=device), codec="rq_8bit")
+    assert encoded.decode().device.type == device.type
+
+
+def test_decode_with_codec_instance_state() -> None:
+    codec = CastCodec(torch.float16)
+    latents = torch.randn(2, 3, 4)
+    assert torch.equal(codec.encode(latents).decode(), latents.half().float())
+
+
+def test_decode_unknown_shortcut_raises() -> None:
+    encoded = vaezip.encode(torch.randn(2, 3))
+    with pytest.raises(ValueError):
+        encoded.decode(codec="nope")
 
 
 def test_serialization_is_compact() -> None:
     latents = torch.randn(2, 32, 64, 64)
     raw_bytes = latents.numel() * 4
     sizes = {
-        name: len(vaezip.save(latents, codec=name))
+        name: len(vaezip.save_tensor(latents, codec=name))
         for name in ("cast_fp32", "cast_fp16", "rq_8bit", "brq_4bit", "lbrq_2bit")
     }
     assert sizes["cast_fp32"] == pytest.approx(raw_bytes, rel=0.01)

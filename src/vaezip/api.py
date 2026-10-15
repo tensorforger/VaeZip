@@ -1,4 +1,4 @@
-"""High level save and load of tensors."""
+"""High level encoding, decoding, saving and loading of tensors."""
 
 from __future__ import annotations
 
@@ -10,130 +10,179 @@ import torch
 
 from vaezip.codecs.auto import AutoCodec
 from vaezip.codecs.base import Codec
-from vaezip.codecs.config import without_version
 from vaezip.codecs.shortcuts import DEFAULT_SHORTCUT
-from vaezip.encoded_tensor import (
-    PTH_FORMAT,
+from vaezip.encoded_tensor import EncodedTensor
+from vaezip.serialization import (
     SAFETENSORS_FORMAT,
-    EncodedTensor,
+    SerializationFormat,
+    deserialize,
+    serialize,
 )
 
 CodecSpecification = Codec | str | os.PathLike[str]
-PTH_SUFFIXES = (".pth", ".pt")
+SINGLE_TENSOR_NAME = "tensor"
 
 
-def _resolve_codec(codec: CodecSpecification | None) -> Codec:
+def encode(
+    tensor: torch.Tensor, codec: CodecSpecification | None = None
+) -> EncodedTensor:
+    """
+    args:
+        tensor: [B, ...], floating point
+        codec: codec object, shortcut name or config path, default is "cast_fp32"
+    returns:
+        encoded: tensors on the device of the input, metadata with the codec config
+    """
     if codec is None:
-        return AutoCodec.from_config(DEFAULT_SHORTCUT)
-    if isinstance(codec, Codec):
-        return codec
-    return AutoCodec.from_config(codec)
+        codec = DEFAULT_SHORTCUT
+    resolved_codec = codec if isinstance(codec, Codec) else AutoCodec.from_config(codec)
+    return resolved_codec.encode(tensor)
 
 
-def _infer_format(path: str | os.PathLike[str], format: str | None) -> str:
-    if format is not None:
-        return format
-    return PTH_FORMAT if Path(path).suffix in PTH_SUFFIXES else SAFETENSORS_FORMAT
+def decode(
+    encoded: EncodedTensor,
+    codec: CodecSpecification | None = None,
+    dtype: torch.dtype = torch.float32,
+    device: torch.device | str | None = None,
+) -> torch.Tensor:
+    """
+    Same as `EncodedTensor.decode()`.
+
+    returns:
+        tensor: [B, ...], original shape, dtype: dtype
+    """
+    return encoded.decode(codec=codec, dtype=dtype, device=device)
 
 
 @overload
 def save(
-    tensor: torch.Tensor,
+    encoded_tensors: dict[str, EncodedTensor],
     path: None = None,
-    codec: CodecSpecification | None = None,
-    save_metadata: bool = True,
-    format: str | None = None,
+    format: SerializationFormat = SAFETENSORS_FORMAT,
 ) -> bytes: ...
 
 
 @overload
 def save(
-    tensor: torch.Tensor,
+    encoded_tensors: dict[str, EncodedTensor],
     path: str | os.PathLike[str],
-    codec: CodecSpecification | None = None,
-    save_metadata: bool = True,
-    format: str | None = None,
+    format: SerializationFormat = SAFETENSORS_FORMAT,
 ) -> None: ...
 
 
 def save(
+    encoded_tensors: dict[str, EncodedTensor],
+    path: str | os.PathLike[str] | None = None,
+    format: SerializationFormat = SAFETENSORS_FORMAT,
+) -> bytes | None:
+    """
+    Writes named encoded tensors to a file, or returns bytes if there is no path.
+
+    args:
+        encoded_tensors: name -> encoded tensor, tensors may use different codecs
+        path: output file, `None` to return bytes
+        format: "safetensors" or "pth", never inferred from the path
+    """
+    return _write_or_return(serialize(encoded_tensors, format=format), path)
+
+
+def load(
+    source: str | os.PathLike[str] | bytes | bytearray,
+    device: torch.device | str | None = None,
+    format: SerializationFormat = SAFETENSORS_FORMAT,
+) -> dict[str, EncodedTensor]:
+    """
+    Reads a file or bytes written by `save()`.
+
+    args:
+        source: file path or bytes
+        device: device of the loaded tensors, default is CPU
+        format: "safetensors" or "pth", never inferred from the path
+    returns:
+        encoded_tensors: name -> encoded tensor, sorted by name
+    """
+    if isinstance(source, (bytes, bytearray)):
+        data = bytes(source)
+    else:
+        data = Path(source).read_bytes()
+    encoded_tensors = deserialize(data, format=format)
+    if device is not None:
+        encoded_tensors = {
+            name: encoded.to(device) for name, encoded in encoded_tensors.items()
+        }
+    return encoded_tensors
+
+
+@overload
+def save_tensor(
+    tensor: torch.Tensor,
+    path: None = None,
+    codec: CodecSpecification | None = None,
+    format: SerializationFormat = SAFETENSORS_FORMAT,
+) -> bytes: ...
+
+
+@overload
+def save_tensor(
+    tensor: torch.Tensor,
+    path: str | os.PathLike[str],
+    codec: CodecSpecification | None = None,
+    format: SerializationFormat = SAFETENSORS_FORMAT,
+) -> None: ...
+
+
+def save_tensor(
     tensor: torch.Tensor,
     path: str | os.PathLike[str] | None = None,
     codec: CodecSpecification | None = None,
-    save_metadata: bool = True,
-    format: str | None = None,
+    format: SerializationFormat = SAFETENSORS_FORMAT,
 ) -> bytes | None:
     """
-    Encodes the tensor and writes it to a file, or returns bytes if there is no path.
+    Encodes a single tensor and saves it as `{"tensor": encoded}`.
 
     args:
         tensor: [B, ...], floating point
         path: output file, `None` to return bytes
         codec: codec object, shortcut name or config path, default is "cast_fp32"
-        save_metadata: store the codec config, required by `load()` without a codec
-        format: "safetensors" or "pth", by default inferred from the path suffix
-        (safetensors if unknown)
+        format: "safetensors" or "pth", never inferred from the path
     """
-    resolved_codec = _resolve_codec(codec)
-    if path is None:
-        serialization_format = format or SAFETENSORS_FORMAT
-    else:
-        serialization_format = _infer_format(path, format)
-    data = resolved_codec.encode(tensor).serialize(
-        save_metadata=save_metadata, format=serialization_format
-    )
-    if path is None:
-        return data
-    Path(path).write_bytes(data)
-    return None
+    encoded_tensors = {SINGLE_TENSOR_NAME: encode(tensor, codec=codec)}
+    return _write_or_return(serialize(encoded_tensors, format=format), path)
 
 
-def load(
+def load_tensor(
     source: str | os.PathLike[str] | bytes | bytearray,
     codec: CodecSpecification | None = None,
     dtype: torch.dtype = torch.float32,
     device: torch.device | str | None = None,
-    format: str | None = None,
+    format: SerializationFormat = SAFETENSORS_FORMAT,
 ) -> torch.Tensor:
     """
-    Reads a file or bytes written by `save()` and decodes the tensor.
+    Loads and decodes a file that holds exactly one entry named "tensor".
 
     args:
         source: file path or bytes
         codec: codec object, shortcut name or config path, by default the codec
-        from the metadata. If both are available they must have the same config.
+        from the metadata
         dtype: floating point dtype of the result
         device: device to decode on, default is CPU
-        format: "safetensors" or "pth", by default inferred from the path suffix
-        (safetensors for bytes)
+        format: "safetensors" or "pth", never inferred from the path
     returns:
         tensor: [B, ...], original shape, dtype: dtype
     """
-    if isinstance(source, (bytes, bytearray)):
-        data = bytes(source)
-        serialization_format = format or SAFETENSORS_FORMAT
-    else:
-        data = Path(source).read_bytes()
-        serialization_format = _infer_format(source, format)
-    encoded = EncodedTensor.deserialize(data, format=serialization_format)
-    stored_config = encoded.codec_config
+    encoded_tensors = load(source, format=format)
+    if list(encoded_tensors) != [SINGLE_TENSOR_NAME]:
+        raise ValueError(
+            f"Expected a single entry named {SINGLE_TENSOR_NAME!r}, "
+            f"found: {list(encoded_tensors)}"
+        )
+    return encoded_tensors[SINGLE_TENSOR_NAME].decode(
+        codec=codec, dtype=dtype, device=device
+    )
 
-    if codec is None:
-        if stored_config is None:
-            raise ValueError(
-                "The data has no codec config in its metadata, "
-                "pass the codec explicitly"
-            )
-        resolved_codec = AutoCodec.from_config(stored_config)
-    else:
-        resolved_codec = _resolve_codec(codec)
-        if stored_config is not None and without_version(
-            stored_config
-        ) != without_version(resolved_codec.get_config()):
-            raise ValueError(
-                f"The codec {resolved_codec!r} does not match the config stored in the "
-                f"data: {stored_config}"
-            )
-    if device is not None:
-        encoded = encoded.to(device)
-    return resolved_codec.decode(encoded, dtype=dtype)
+
+def _write_or_return(data: bytes, path: str | os.PathLike[str] | None) -> bytes | None:
+    if path is None:
+        return data
+    Path(path).write_bytes(data)
+    return None

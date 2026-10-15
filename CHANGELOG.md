@@ -3,6 +3,25 @@
 All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [0.2.0]
+
+### Changed (breaking)
+
+- `vaezip.save()` and `vaezip.load()` operate on `dict[str, EncodedTensor]` and support several tensors with different codecs in one file. Tensors are stored as `<name>.<inner_name>`, codec configs as `<name>.codec_config`, the file metadata has `vaezip_format_version` and `vaezip_version`.
+- `load()` returns encoded tensors, has `device` and `format` arguments and does not decode.
+- The format is `"safetensors"` by default, `"pth"` is enabled only by `format="pth"` and is never inferred from the file name.
+- The metadata with the codec config is always stored, `save_metadata` is removed.
+
+### Added
+
+- `EncodedTensor.decode(codec=None, dtype=..., device=...)`, the codec is built from the metadata by default.
+- `vaezip.encode()` and `vaezip.decode()`.
+- `vaezip.save_tensor()` and `vaezip.load_tensor()` for a single tensor.
+
+### Removed
+
+- `EncodedTensor.serialize()`, `EncodedTensor.deserialize()`, `vaezip.serialize()`, `vaezip.deserialize()`.
+
 ## [0.1.0]
 
 First release.

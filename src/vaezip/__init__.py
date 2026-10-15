@@ -2,15 +2,17 @@
 
 from vaezip import codecs
 from vaezip._version import __version__
-from vaezip.api import load, save
-from vaezip.encoded_tensor import EncodedTensor, deserialize, serialize
+from vaezip.api import decode, encode, load, load_tensor, save, save_tensor
+from vaezip.encoded_tensor import EncodedTensor
 
 __all__ = [
     "EncodedTensor",
     "__version__",
     "codecs",
-    "deserialize",
+    "decode",
+    "encode",
     "load",
+    "load_tensor",
     "save",
-    "serialize",
+    "save_tensor",
 ]
