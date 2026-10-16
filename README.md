@@ -4,9 +4,11 @@
 **VaeZip** is the simple and efficient way to store latent tensors. It brings in low-bit quantization codecs, built around **PyTorch** and **safetensors** and exploits how [VAEs store there latents](https://github.com/tensorforger/LatentStorageBenchmark).
 
 
-The codecs were selected from the results of the
+* The codecs were selected from the results of the
 [LatentStorageBenchmark](https://github.com/tensorforger/LatentStorageBenchmark),
-which compares many latent storage schemes by reconstruction quality, size and I/O time.
+which compares many latent storage schemes by **reconstruction**, **fidelity**, **compression** and **I/O latency**.
+
+* The impact on pretraining of the **flow matching T2I DiT** was measured in [VaeZipTrainBench](https://github.com/tensorforger/VaeZipTrainBench).
 
 ![demo](https://raw.githubusercontent.com/tensorforger/tensorforger/main/assets/VaeZip_demo.png)
 
